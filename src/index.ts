@@ -302,7 +302,7 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 }
 
 /**
- * Fetch cached schedule data from database
+ * Fetch cached schedule data from the database
  */
 async function getCachedData(supabase: SupabaseClient): Promise<YasnoResponse> {
 	const { data: cacheRow } = await supabase
