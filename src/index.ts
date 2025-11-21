@@ -19,6 +19,7 @@ interface DaySchedule {
 interface ZoneData {
 	today: DaySchedule;
 	tomorrow: DaySchedule;
+	updatedOn?: string;
 }
 
 interface YasnoResponse {
@@ -61,6 +62,28 @@ async function handleTelegramUpdate(update: any, env: any) {
 		} else if (text === '/stop') {
 			await supabase.from('subscribers').delete().eq('chat_id', chatId);
 			await sendMessage(chatId, "You have unsubscribed from updates.", env.TELEGRAM_TOKEN);
+		} else if (text === '/now') {
+			// Get user's subscribed zone
+			const { data: subscriber } = await supabase
+				.from('subscribers')
+				.select('zone')
+				.eq('chat_id', chatId)
+				.single();
+
+			if (!subscriber) {
+				await sendMessage(chatId, "You are not subscribed to any zone. Use /start to subscribe.", env.TELEGRAM_TOKEN);
+			} else {
+				// Fetch fresh schedule
+				await sendMessage(chatId, `Fetching current schedule for Zone ${subscriber.zone}...`, env.TELEGRAM_TOKEN);
+				const currentData = await fetchYasnoData();
+
+				if (currentData && currentData[subscriber.zone]) {
+					const msg = formatScheduleMessage(subscriber.zone, currentData[subscriber.zone]);
+					await sendMessage(chatId, msg, env.TELEGRAM_TOKEN);
+				} else {
+					await sendMessage(chatId, "Unable to fetch schedule data. Please try again later.", env.TELEGRAM_TOKEN);
+				}
+			}
 		}
 	}
 
@@ -112,9 +135,25 @@ async function checkScheduleUpdates(env: any) {
 	const zones = Object.keys(freshData);
 
 	for (const zone of zones) {
-		// Simple JSON string comparison for the specific zone data
-		if (JSON.stringify(freshData[zone]) !== JSON.stringify(cachedData[zone])) {
+		// Use updatedOn timestamp to detect changes, or compare schedule data if missing
+		const freshZone = freshData[zone];
+		const cachedZone = cachedData[zone];
+
+		if (!cachedZone) {
+			// First time seeing this zone
 			changedZones.push(zone);
+		} else if (freshZone.updatedOn && cachedZone.updatedOn) {
+			// Compare timestamps if available
+			if (freshZone.updatedOn !== cachedZone.updatedOn) {
+				changedZones.push(zone);
+			}
+		} else {
+			// Fallback: compare only the schedule data (today + tomorrow), not updatedOn
+			const freshSchedule = { today: freshZone.today, tomorrow: freshZone.tomorrow };
+			const cachedSchedule = { today: cachedZone.today, tomorrow: cachedZone.tomorrow };
+			if (JSON.stringify(freshSchedule) !== JSON.stringify(cachedSchedule)) {
+				changedZones.push(zone);
+			}
 		}
 	}
 
