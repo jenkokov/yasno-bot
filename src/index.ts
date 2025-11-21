@@ -83,7 +83,7 @@ const MESSAGES = {
 // ==========================================
 
 export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
 		if (request.method === 'POST') {
 			try {
 				const update = await request.json() as TelegramUpdate;
@@ -99,7 +99,7 @@ export default {
 	/**
 	 * Handle scheduled cron jobs (every 5 minutes)
 	 */
-	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+	async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
 		await checkScheduleUpdates(env);
 	},
 };
@@ -238,7 +238,9 @@ async function handleCallbackQuery(
 		});
 
 		if (error) {
-			throw error;
+			console.error('Error saving subscription to database:', error);
+			await sendMessage(chatId, MESSAGES.ERROR_SUBSCRIPTION, token);
+			return;
 		}
 
 		// Acknowledge the button click
