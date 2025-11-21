@@ -35,6 +35,17 @@ npm run cf-typegen  # Generate TypeScript types from wrangler configuration
 
 ## Architecture
 
+### Code Organization
+The codebase is organized into clear sections in `src/index.ts`:
+- **Type Definitions**: TypeScript interfaces for type safety
+- **Constants**: Configuration, API endpoints, message templates
+- **Worker Entry Points**: Main fetch and scheduled handlers
+- **Telegram Update Handling**: Command routing and handlers
+- **Schedule Update Checking**: Change detection and notifications
+- **Yasno API**: External API integration
+- **Message Formatting**: Schedule display logic
+- **Telegram API Helpers**: Bot communication functions
+
 ### Entry Points
 The worker has two main entry points in `src/index.ts`:
 
@@ -73,6 +84,28 @@ The bot compares fresh API data with cached data to detect schedule changes:
 - **Fallback**: If timestamps missing, compares only schedule data (today/tomorrow slots)
 - **First run**: All zones marked as changed if no cache exists
 - This prevents false positives from API response variations while reliably detecting actual schedule updates
+
+### Key Functions
+
+#### Command Handlers (src/index.ts:140-266)
+- `handleCommand()` - Routes commands to appropriate handlers
+- `handleStartCommand()` - Shows zone selector for `/start` and `/subscribe`
+- `handleStopCommand()` - Unsubscribes user from updates
+- `handleNowCommand()` - Fetches current schedule on demand
+- `handleCallbackQuery()` - Processes zone selection button clicks
+
+#### Schedule Checking (src/index.ts:275-396)
+- `checkScheduleUpdates()` - Main orchestrator for cron job
+- `detectChangedZones()` - Compares fresh vs cached data
+- `hasZoneChanged()` - Single zone comparison logic
+- `notifySubscribers()` - Sends updates to affected users
+- `updateCache()` - Persists new data to database
+
+#### Formatting (src/index.ts:422-536)
+- `formatScheduleMessage()` - Creates complete message for zone
+- `formatDay()` - Formats single day (today/tomorrow)
+- `formatTotalTime()` - Converts minutes to "Xh Ym" format
+- `formatMinutes()` - Converts minutes to "HH:MM" format
 
 ### Message Formatting
 Schedule messages use a simple list format for each day (today and tomorrow):

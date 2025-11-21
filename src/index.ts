@@ -1,9 +1,33 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// --- Configuration ---
-const YASNO_API = 'https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/25/dsos/902/planned-outages';
+// ==========================================
+// TYPE DEFINITIONS
+// ==========================================
 
-// Define interfaces for the Yasno JSON structure
+interface Env {
+	TELEGRAM_TOKEN: string;
+	SUPABASE_URL: string;
+	SUPABASE_KEY: string;
+}
+
+/**
+ * Telegram webhook update structure
+ */
+interface TelegramUpdate {
+	message?: {
+		chat: { id: number };
+		text?: string;
+	};
+	callback_query?: {
+		id: string;
+		message: { chat: { id: number } };
+		data: string;
+	};
+}
+
+/**
+ * Yasno API data structures
+ */
 interface Slot {
 	start: number;
 	end: number;
@@ -26,217 +50,426 @@ interface YasnoResponse {
 	[key: string]: ZoneData;
 }
 
+// ==========================================
+// CONSTANTS
+// ==========================================
+
+const YASNO_API = 'https://app.yasno.ua/api/blackout-service/public/shutdowns/regions/25/dsos/902/planned-outages';
+
+const SCHEDULE_STATUS = {
+	APPLIES: 'ScheduleApplies',
+	WAITING: 'WaitingForSchedule',
+} as const;
+
+const SLOT_TYPE = {
+	OUTAGE: 'Definite',
+	POWER: 'NotPlanned',
+} as const;
+
+const ZONES = ['1', '2', '3', '4', '5', '6'] as const;
+
+const MESSAGES = {
+	UNSUBSCRIBED: 'You have unsubscribed from updates.',
+	NOT_SUBSCRIBED: 'You are not subscribed to any zone. Use /start or /subscribe to subscribe.',
+	FETCHING_SCHEDULE: (zone: string) => `Fetching current schedule for Zone ${zone}...`,
+	SUBSCRIBED: (zone: string) => `✅ Subscribed to Zone ${zone}. Fetching current schedule...`,
+	ERROR_FETCHING: 'Unable to fetch schedule data. Please try again later.',
+	ERROR_SUBSCRIPTION: 'Error saving subscription. Please try again.',
+	SELECT_ZONE: 'Please select your Yasno Zone:',
+} as const;
+
+// ==========================================
+// WORKER ENTRY POINTS
+// ==========================================
+
 export default {
-	async fetch(request: Request, env: any, ctx: any): Promise<Response> {
-		// 1. Handle Telegram Webhooks
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		if (request.method === 'POST') {
 			try {
-				const update = await request.json() as any;
+				const update = await request.json() as TelegramUpdate;
 				await handleTelegramUpdate(update, env);
 			} catch (e) {
-				console.error('Error handling update', e);
+				console.error('Error handling Telegram update:', e);
 			}
 			return new Response('OK');
 		}
 		return new Response('Send POST request to trigger webhook');
 	},
 
-	// 2. Handle Cron Jobs (Scheduled Checks)
-	async scheduled(event: any, env: any, ctx: any) {
+	/**
+	 * Handle scheduled cron jobs (every 5 minutes)
+	 */
+	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
 		await checkScheduleUpdates(env);
 	},
 };
 
-// --- Core Logic ---
+// ==========================================
+// TELEGRAM UPDATE HANDLING
+// ==========================================
 
-async function handleTelegramUpdate(update: any, env: any) {
+/**
+ * Main handler for incoming Telegram updates
+ */
+async function handleTelegramUpdate(update: TelegramUpdate, env: Env): Promise<void> {
 	const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
 
-	// Handle Commands (e.g. /start)
-	if (update.message && update.message.text) {
+	// Handle text commands
+	if (update.message?.text) {
 		const chatId = update.message.chat.id;
-		const text = update.message.text;
+		const command = update.message.text;
 
-		if (text === '/start') {
-			await sendZoneSelector(chatId, env.TELEGRAM_TOKEN);
-		} else if (text === '/subscribe') {
-			await sendZoneSelector(chatId, env.TELEGRAM_TOKEN);
-		} else if (text === '/stop') {
-			await supabase.from('subscribers').delete().eq('chat_id', chatId);
-			await sendMessage(chatId, "You have unsubscribed from updates.", env.TELEGRAM_TOKEN);
-		} else if (text === '/now') {
-			// Get user's subscribed zone
-			const { data: subscriber } = await supabase
-				.from('subscribers')
-				.select('zone')
-				.eq('chat_id', chatId)
-				.single();
-
-			if (!subscriber) {
-				await sendMessage(chatId, "You are not subscribed to any zone. Use /start or /subscribe to subscribe.", env.TELEGRAM_TOKEN);
-			} else {
-				// Fetch fresh schedule
-				await sendMessage(chatId, `Fetching current schedule for Zone ${subscriber.zone}...`, env.TELEGRAM_TOKEN);
-				const currentData = await fetchYasnoData();
-
-				if (currentData && currentData[subscriber.zone]) {
-					const msg = formatScheduleMessage(subscriber.zone, currentData[subscriber.zone]);
-					await sendMessage(chatId, msg, env.TELEGRAM_TOKEN);
-				} else {
-					await sendMessage(chatId, "Unable to fetch schedule data. Please try again later.", env.TELEGRAM_TOKEN);
-				}
-			}
-		}
+		await handleCommand(command, chatId, supabase, env.TELEGRAM_TOKEN);
 	}
 
-	// Handle Button Clicks (Callback Queries)
+	// Handle button callbacks
 	if (update.callback_query) {
-		const chatId = update.callback_query.message.chat.id;
-		const data = update.callback_query.data; // e.g. "zone_1.1"
-
-		if (data.startsWith('zone_')) {
-			const zone = data.replace('zone_', '');
-
-			// 1. Save to DB
-			const { error } = await supabase.from('subscribers').upsert({
-				chat_id: chatId,
-				zone: zone
-			});
-
-			if (!error) {
-				// 2. Ack the button click
-				await answerCallback(update.callback_query.id, `Subscribed to Zone ${zone}`, env.TELEGRAM_TOKEN);
-
-				// 3. Send immediate current schedule
-				await sendMessage(chatId, `✅ Subscribed to Zone ${zone}. Fetching current schedule...`, env.TELEGRAM_TOKEN);
-				const currentData = await fetchYasnoData();
-				if (currentData && currentData[zone]) {
-					const msg = formatScheduleMessage(zone, currentData[zone]);
-					await sendMessage(chatId, msg, env.TELEGRAM_TOKEN);
-				}
-			} else {
-				await sendMessage(chatId, "Error saving subscription. Please try again.", env.TELEGRAM_TOKEN);
-			}
-		}
+		await handleCallbackQuery(update.callback_query, supabase, env.TELEGRAM_TOKEN);
 	}
 }
 
-async function checkScheduleUpdates(env: any) {
+/**
+ * Route commands to appropriate handlers
+ */
+async function handleCommand(
+	command: string,
+	chatId: number,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	switch (command) {
+		case '/start':
+		case '/subscribe':
+			await handleStartCommand(chatId, token);
+			break;
+		case '/stop':
+			await handleStopCommand(chatId, supabase, token);
+			break;
+		case '/now':
+			await handleNowCommand(chatId, supabase, token);
+			break;
+		default:
+			// Ignore unknown commands
+			break;
+	}
+}
+
+/**
+ * Handle /start and /subscribe commands - show zone selector
+ */
+async function handleStartCommand(chatId: number, token: string): Promise<void> {
+	await sendZoneSelector(chatId, token);
+}
+
+/**
+ * Handle /stop command - unsubscribe user
+ */
+async function handleStopCommand(
+	chatId: number,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	try {
+		await supabase.from('subscribers').delete().eq('chat_id', chatId);
+		await sendMessage(chatId, MESSAGES.UNSUBSCRIBED, token);
+	} catch (error) {
+		console.error('Error unsubscribing user:', error);
+	}
+}
+
+/**
+ * Handle /now command - fetch and display current schedule
+ */
+async function handleNowCommand(
+	chatId: number,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	try {
+		// Get user's subscribed zone
+		const { data: subscriber } = await supabase
+			.from('subscribers')
+			.select('zone')
+			.eq('chat_id', chatId)
+			.single();
+
+		if (!subscriber) {
+			await sendMessage(chatId, MESSAGES.NOT_SUBSCRIBED, token);
+			return;
+		}
+
+		// Fetch and send current schedule
+		await sendMessage(chatId, MESSAGES.FETCHING_SCHEDULE(subscriber.zone), token);
+		const currentData = await fetchYasnoData();
+
+		if (currentData && currentData[subscriber.zone]) {
+			const msg = formatScheduleMessage(subscriber.zone, currentData[subscriber.zone]);
+			await sendMessage(chatId, msg, token);
+		} else {
+			await sendMessage(chatId, MESSAGES.ERROR_FETCHING, token);
+		}
+	} catch (error) {
+		console.error('Error handling /now command:', error);
+		await sendMessage(chatId, MESSAGES.ERROR_FETCHING, token);
+	}
+}
+
+/**
+ * Handle callback query (zone selection button clicks)
+ */
+async function handleCallbackQuery(
+	callbackQuery: NonNullable<TelegramUpdate['callback_query']>,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	const chatId = callbackQuery.message.chat.id;
+	const data = callbackQuery.data;
+
+	if (!data.startsWith('zone_')) {
+		return;
+	}
+
+	const zone = data.replace('zone_', '');
+
+	try {
+		// Save subscription to database
+		const { error } = await supabase.from('subscribers').upsert({
+			chat_id: chatId,
+			zone: zone
+		});
+
+		if (error) {
+			throw error;
+		}
+
+		// Acknowledge the button click
+		await answerCallback(callbackQuery.id, `Subscribed to Zone ${zone}`, token);
+
+		// Send current schedule
+		await sendMessage(chatId, MESSAGES.SUBSCRIBED(zone), token);
+		const currentData = await fetchYasnoData();
+
+		if (currentData && currentData[zone]) {
+			const msg = formatScheduleMessage(zone, currentData[zone]);
+			await sendMessage(chatId, msg, token);
+		}
+	} catch (error) {
+		console.error('Error handling zone selection:', error);
+		await sendMessage(chatId, MESSAGES.ERROR_SUBSCRIPTION, token);
+	}
+}
+
+// ==========================================
+// SCHEDULE UPDATE CHECKING
+// ==========================================
+
+/**
+ * Check for schedule updates and notify subscribers
+ */
+async function checkScheduleUpdates(env: Env): Promise<void> {
 	const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
 
-	// 1. Fetch fresh data
-	const freshData = await fetchYasnoData();
-	if (!freshData) return; // API might be down
+	try {
+		// Fetch fresh data from Yasno API
+		const freshData = await fetchYasnoData();
+		if (!freshData) {
+			console.log('Failed to fetch data from Yasno API');
+			return;
+		}
 
-	// 2. Fetch cached data
-	const { data: cacheRow } = await supabase.from('schedule_cache').select('raw_data').eq('id', 1).single();
-	const cachedData = cacheRow?.raw_data || {};
+		// Fetch cached data from database
+		const cachedData = await getCachedData(supabase);
 
-	// 3. Find changed zones
+		// Detect which zones have changed
+		const changedZones = detectChangedZones(freshData, cachedData);
+
+		if (changedZones.length === 0) {
+			console.log('No schedule changes detected');
+			return;
+		}
+
+		console.log(`Schedule changes detected in zones: ${changedZones.join(', ')}`);
+
+		// Notify subscribers of changed zones
+		await notifySubscribers(changedZones, freshData, supabase, env.TELEGRAM_TOKEN);
+
+		// Update cache with fresh data
+		await updateCache(supabase, freshData);
+	} catch (error) {
+		console.error('Error checking schedule updates:', error);
+	}
+}
+
+/**
+ * Fetch cached schedule data from database
+ */
+async function getCachedData(supabase: SupabaseClient): Promise<YasnoResponse> {
+	const { data: cacheRow } = await supabase
+		.from('schedule_cache')
+		.select('raw_data')
+		.eq('id', 1)
+		.single();
+
+	return (cacheRow?.raw_data || {}) as YasnoResponse;
+}
+
+/**
+ * Detect which zones have changed by comparing fresh and cached data
+ */
+function detectChangedZones(freshData: YasnoResponse, cachedData: YasnoResponse): string[] {
 	const changedZones: string[] = [];
 	const zones = Object.keys(freshData);
 
 	for (const zone of zones) {
-		// Use updatedOn timestamp to detect changes, or compare schedule data if missing
 		const freshZone = freshData[zone];
 		const cachedZone = cachedData[zone];
 
-		if (!cachedZone) {
-			// First time seeing this zone
+		if (hasZoneChanged(freshZone, cachedZone)) {
 			changedZones.push(zone);
-		} else if (freshZone.updatedOn && cachedZone.updatedOn) {
-			// Compare timestamps if available
-			if (freshZone.updatedOn !== cachedZone.updatedOn) {
-				changedZones.push(zone);
-			}
-		} else {
-			// Fallback: compare only the schedule data (today + tomorrow), not updatedOn
-			const freshSchedule = { today: freshZone.today, tomorrow: freshZone.tomorrow };
-			const cachedSchedule = { today: cachedZone.today, tomorrow: cachedZone.tomorrow };
-			if (JSON.stringify(freshSchedule) !== JSON.stringify(cachedSchedule)) {
-				changedZones.push(zone);
-			}
 		}
 	}
 
-	if (changedZones.length === 0) {
-		console.log("No changes detected.");
-		return;
-	}
-
-	console.log(`Changes detected in zones: ${changedZones.join(', ')}`);
-
-	// 4. Notify Users
-	for (const zone of changedZones) {
-		// Get subscribers for this zone
-		const { data: subs } = await supabase.from('subscribers').select('chat_id').eq('zone', zone);
-
-		if (subs && subs.length > 0) {
-			const message = formatScheduleMessage(zone, freshData[zone], true); // true = isUpdate
-
-			// Send in parallel
-			await Promise.all(subs.map(sub => sendMessage(sub.chat_id, message, env.TELEGRAM_TOKEN)));
-		}
-	}
-
-	// 5. Update Cache
-	await supabase.from('schedule_cache').update({ raw_data: freshData, updated_at: new Date() }).eq('id', 1);
+	return changedZones;
 }
 
-// --- Helpers: Yasno & Formatting ---
+/**
+ * Check if a zone's schedule has changed
+ */
+function hasZoneChanged(freshZone: ZoneData, cachedZone?: ZoneData): boolean {
+	if (!cachedZone) {
+		return true; // First time seeing this zone
+	}
 
+	// Compare timestamps if available (most reliable)
+	if (freshZone.updatedOn && cachedZone.updatedOn) {
+		return freshZone.updatedOn !== cachedZone.updatedOn;
+	}
+
+	// Fallback: compare schedule data only
+	const freshSchedule = { today: freshZone.today, tomorrow: freshZone.tomorrow };
+	const cachedSchedule = { today: cachedZone.today, tomorrow: cachedZone.tomorrow };
+	return JSON.stringify(freshSchedule) !== JSON.stringify(cachedSchedule);
+}
+
+/**
+ * Notify all subscribers of changed zones
+ */
+async function notifySubscribers(
+	changedZones: string[],
+	freshData: YasnoResponse,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	for (const zone of changedZones) {
+		const { data: subscribers } = await supabase
+			.from('subscribers')
+			.select('chat_id')
+			.eq('zone', zone);
+
+		if (!subscribers || subscribers.length === 0) {
+			continue;
+		}
+
+		const message = formatScheduleMessage(zone, freshData[zone], true);
+
+		// Send notifications in parallel
+		await Promise.all(
+			subscribers.map(sub => sendMessage(sub.chat_id, message, token))
+		);
+	}
+}
+
+/**
+ * Update cached schedule data in database
+ */
+async function updateCache(supabase: SupabaseClient, freshData: YasnoResponse): Promise<void> {
+	await supabase
+		.from('schedule_cache')
+		.update({ raw_data: freshData, updated_at: new Date() })
+		.eq('id', 1);
+}
+
+// ==========================================
+// YASNO API
+// ==========================================
+
+/**
+ * Fetch schedule data from Yasno API
+ */
 async function fetchYasnoData(): Promise<YasnoResponse | null> {
 	try {
-		const res = await fetch(YASNO_API);
-		if (res.ok) return await res.json() as YasnoResponse;
-		return null;
-	} catch (e) {
-		console.error("Yasno fetch failed", e);
+		const response = await fetch(YASNO_API);
+		if (!response.ok) {
+			console.error(`Yasno API returned status ${response.status}`);
+			return null;
+		}
+		return await response.json() as YasnoResponse;
+	} catch (error) {
+		console.error('Failed to fetch Yasno data:', error);
 		return null;
 	}
 }
 
+// ==========================================
+// MESSAGE FORMATTING
+// ==========================================
+
+/**
+ * Convert minutes since midnight to HH:MM format
+ */
 function formatMinutes(minutes: number): string {
-	const h = Math.floor(minutes / 60).toString().padStart(2, '0');
-	const m = (minutes % 60).toString().padStart(2, '0');
-	return `${h}:${m}`;
+	const hours = Math.floor(minutes / 60).toString().padStart(2, '0');
+	const mins = (minutes % 60).toString().padStart(2, '0');
+	return `${hours}:${mins}`;
 }
 
-function getDuration(start: number, end: number): string {
-	const diff = end - start;
-	const h = Math.floor(diff / 60);
-	const m = diff % 60;
-	return `${h}h${m > 0 ? m + 'm' : ''}`;
+/**
+ * Calculate and format duration between two time points
+ */
+function getDuration(startMinutes: number, endMinutes: number): string {
+	const diffMinutes = endMinutes - startMinutes;
+	const hours = Math.floor(diffMinutes / 60);
+	const mins = diffMinutes % 60;
+	return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
 }
 
+/**
+ * Format total minutes into hours and minute string
+ */
+function formatTotalTime(totalMinutes: number): string {
+	const hours = Math.floor(totalMinutes / 60);
+	const minutes = totalMinutes % 60;
+	return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+}
+
+/**
+ * Format a single day's schedule (today or tomorrow)
+ */
 function formatDay(dayData: DaySchedule, label: string): string {
 	const dateObj = new Date(dayData.date);
-	const dateStr = dateObj.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric', weekday: 'short' });
+	const dateStr = dateObj.toLocaleDateString('uk-UA', {
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		weekday: 'short'
+	});
 
-	// Status emoji: ✅ for confirmed schedule, ⏳ for waiting
-	const statusEmoji = dayData.status === 'ScheduleApplies' ? '✅' : '⏳';
+	// Status emoji based on schedule certainty
+	const statusEmoji = dayData.status === SCHEDULE_STATUS.APPLIES ? '✅' : '⏳';
 
 	let output = `📅 *${label}* (${dateStr}) ${statusEmoji}\n\n`;
 
-	// Get outages and power slots
-	const outages = dayData.slots.filter(slot => slot.type === 'Definite');
-	const power = dayData.slots.filter(slot => slot.type === 'NotPlanned');
+	// Separate slots by type
+	const outages = dayData.slots.filter(slot => slot.type === SLOT_TYPE.OUTAGE);
+	const power = dayData.slots.filter(slot => slot.type === SLOT_TYPE.POWER);
 
-	// Calculate total outage time
+	// Calculate total times
 	const totalOutageMinutes = outages.reduce((sum, slot) => sum + (slot.end - slot.start), 0);
-	const outageHours = Math.floor(totalOutageMinutes / 60);
-	const outageMinutes = totalOutageMinutes % 60;
-	const outageTimeStr = outageMinutes > 0 ? `${outageHours}h${outageMinutes}m` : `${outageHours}h`;
-
-	// Calculate total power time
 	const totalPowerMinutes = power.reduce((sum, slot) => sum + (slot.end - slot.start), 0);
-	const powerHours = Math.floor(totalPowerMinutes / 60);
-	const powerMinutes = totalPowerMinutes % 60;
-	const powerTimeStr = powerMinutes > 0 ? `${powerHours}h${powerMinutes}m` : `${powerHours}h`;
 
-	// Format outages
+	// Format outages section
 	if (outages.length > 0) {
-		output += `🔴 *Outages* (${outageTimeStr} total):\n`;
+		output += `🔴 *Outages* (${formatTotalTime(totalOutageMinutes)} total):\n`;
 		outages.forEach(slot => {
 			const start = formatMinutes(slot.start);
 			const end = formatMinutes(slot.end);
@@ -247,8 +480,8 @@ function formatDay(dayData: DaySchedule, label: string): string {
 		output += `🔴 *Outages* (0h total):\n  • No outages\n`;
 	}
 
-	// Format power
-	output += `🟢 *Power* (${powerTimeStr} total):\n`;
+	// Format power section
+	output += `🟢 *Power* (${formatTotalTime(totalPowerMinutes)} total):\n`;
 	power.forEach(slot => {
 		const start = formatMinutes(slot.start);
 		const end = formatMinutes(slot.end);
@@ -259,76 +492,130 @@ function formatDay(dayData: DaySchedule, label: string): string {
 	return output;
 }
 
+/**
+ * Format complete schedule message for a zone
+ */
 function formatScheduleMessage(zone: string, data: ZoneData, isUpdate = false): string {
 	const header = isUpdate
 		? `⚡️ *Schedule Updated*\nZone: *${zone}*\n\n`
 		: `⚡️ *Current Schedule*\nZone: *${zone}*\n\n`;
 
-	let footer = '';
-	if (data.updatedOn) {
-		const updatedDate = new Date(data.updatedOn);
-		const updatedStr = updatedDate.toLocaleString('uk-UA', {
-			timeZone: 'Europe/Kyiv',
-			day: '2-digit',
-			month: '2-digit',
-			year: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
-		footer = `\n⏱ Updated: ${updatedStr}`;
-	}
+	const footer = formatUpdateTimestamp(data.updatedOn);
 
 	return header +
-		formatDay(data.today, "Today") +
-		"\n" + formatDay(data.tomorrow, "Tomorrow") +
+		formatDay(data.today, 'Today') +
+		'\n' + formatDay(data.tomorrow, 'Tomorrow') +
 		footer;
 }
 
-// --- Helpers: Telegram ---
+/**
+ * Format the update timestamp footer
+ */
+function formatUpdateTimestamp(updatedOn?: string): string {
+	if (!updatedOn) {
+		return '';
+	}
 
-async function sendMessage(chatId: number | string, text: string, token: string) {
-	const url = `https://api.telegram.org/bot${token}/sendMessage`;
-	await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'Markdown' })
+	const updatedDate = new Date(updatedOn);
+	const updatedStr = updatedDate.toLocaleString('uk-UA', {
+		timeZone: 'Europe/Kyiv',
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit'
 	});
+
+	return `\n⏱ Updated: ${updatedStr}`;
 }
 
-async function answerCallback(callbackId: string, text: string, token: string) {
-	const url = `https://api.telegram.org/bot${token}/answerCallbackQuery`;
-	await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ callback_query_id: callbackId, text: text })
-	});
+// ==========================================
+// TELEGRAM API HELPERS
+// ==========================================
+
+/**
+ * Send a text message to a Telegram chat
+ */
+async function sendMessage(chatId: number | string, text: string, token: string): Promise<void> {
+	try {
+		const url = `https://api.telegram.org/bot${token}/sendMessage`;
+		await fetch(url, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				chat_id: chatId,
+				text: text,
+				parse_mode: 'Markdown'
+			})
+		});
+	} catch (error) {
+		console.error(`Failed to send message to chat ${chatId}:`, error);
+	}
 }
 
-async function sendZoneSelector(chatId: number, token: string) {
-	const groups = ['1', '2', '3', '4', '5', '6'];
-	const keyboard = [];
+/**
+ * Answer a callback query (acknowledge button click)
+ */
+async function answerCallback(callbackId: string, text: string, token: string): Promise<void> {
+	try {
+		const url = `https://api.telegram.org/bot${token}/answerCallbackQuery`;
+		await fetch(url, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				callback_query_id: callbackId,
+				text: text
+			})
+		});
+	} catch (error) {
+		console.error('Failed to answer callback query:', error);
+	}
+}
 
-	// Create rows of buttons
-	for (let i = 0; i < groups.length; i+=2) {
+/**
+ * Send zone selector keyboard to user
+ */
+async function sendZoneSelector(chatId: number, token: string): Promise<void> {
+	try {
+		const keyboard = buildZoneKeyboard();
+		const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+		await fetch(url, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				chat_id: chatId,
+				text: MESSAGES.SELECT_ZONE,
+				reply_markup: { inline_keyboard: keyboard }
+			})
+		});
+	} catch (error) {
+		console.error('Failed to send zone selector:', error);
+	}
+}
+
+/**
+ * Build inline keyboard with zone buttons (1.1, 1.2, 2.1, etc.)
+ */
+function buildZoneKeyboard(): Array<Array<{ text: string; callback_data: string }>> {
+	const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+
+	// Create rows with 4 buttons each (X.1, X.2, Y.1, Y.2)
+	for (let i = 0; i < ZONES.length; i += 2) {
 		const row = [];
-		// Add X.1 and X.2 for the current group
-		row.push({ text: `${groups[i]}.1`, callback_data: `zone_${groups[i]}.1` });
-		row.push({ text: `${groups[i]}.2`, callback_data: `zone_${groups[i]}.2` });
-		if (groups[i+1]) {
-			row.push({ text: `${groups[i+1]}.1`, callback_data: `zone_${groups[i+1]}.1` });
-			row.push({ text: `${groups[i+1]}.2`, callback_data: `zone_${groups[i+1]}.2` });
+
+		// Add buttons for the current group
+		row.push({ text: `${ZONES[i]}.1`, callback_data: `zone_${ZONES[i]}.1` });
+		row.push({ text: `${ZONES[i]}.2`, callback_data: `zone_${ZONES[i]}.2` });
+
+		// Add buttons for next group if exists
+		if (i + 1 < ZONES.length) {
+			row.push({ text: `${ZONES[i + 1]}.1`, callback_data: `zone_${ZONES[i + 1]}.1` });
+			row.push({ text: `${ZONES[i + 1]}.2`, callback_data: `zone_${ZONES[i + 1]}.2` });
 		}
+
 		keyboard.push(row);
 	}
 
-	const url = `https://api.telegram.org/bot${token}/sendMessage`;
-	await fetch(url, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			chat_id: chatId,
-			text: "Please select your Yasno Zone:",
-			reply_markup: { inline_keyboard: keyboard }
-		})
-	});
+	return keyboard;
 }
