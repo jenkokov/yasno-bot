@@ -165,3 +165,14 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+
+# Temp files
+refactoring_proposal.md
+refactoring_summary.md
+schedule_format_options.md
+schedule_output_example.txt
