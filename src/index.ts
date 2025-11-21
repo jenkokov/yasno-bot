@@ -215,7 +215,7 @@ async function handleNowCommand(
 }
 
 /**
- * Handle callback query (zone selection button clicks)
+ * Handle a callback query (zone selection button clicks)
  */
 async function handleCallbackQuery(
 	callbackQuery: NonNullable<TelegramUpdate['callback_query']>,
@@ -232,7 +232,6 @@ async function handleCallbackQuery(
 	const zone = data.replace('zone_', '');
 
 	try {
-		// Save subscription to database
 		const { error } = await supabase.from('subscribers').upsert({
 			chat_id: chatId,
 			zone: zone
