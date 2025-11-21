@@ -211,33 +211,72 @@ function formatDay(dayData: DaySchedule, label: string): string {
 	const dateObj = new Date(dayData.date);
 	const dateStr = dateObj.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric', weekday: 'short' });
 
-	// Status Icons
-	const statusIcon = dayData.status === 'ScheduleApplies' ? '❌' : '❓'; // Red X for definite schedule, "?" for waiting
+	let output = `📅 *${label}* (${dateStr})\n\n`;
 
-	let output = `*${label} (${dateStr}), ${dayData.status}* ${statusIcon}:\n`;
+	// Get outages and power slots
+	const outages = dayData.slots.filter(slot => slot.type === 'Definite');
+	const power = dayData.slots.filter(slot => slot.type === 'NotPlanned');
 
-	dayData.slots.forEach(slot => {
-		// Yasno logic: Definite = Outage (Red), NotPlanned = Power On (Green)
-		const icon = slot.type === 'Definite' ? '🔴' : '🟢';
+	// Calculate total outage time
+	const totalOutageMinutes = outages.reduce((sum, slot) => sum + (slot.end - slot.start), 0);
+	const outageHours = Math.floor(totalOutageMinutes / 60);
+	const outageMinutes = totalOutageMinutes % 60;
+	const outageTimeStr = outageMinutes > 0 ? `${outageHours}h${outageMinutes}m` : `${outageHours}h`;
+
+	// Calculate total power time
+	const totalPowerMinutes = power.reduce((sum, slot) => sum + (slot.end - slot.start), 0);
+	const powerHours = Math.floor(totalPowerMinutes / 60);
+	const powerMinutes = totalPowerMinutes % 60;
+	const powerTimeStr = powerMinutes > 0 ? `${powerHours}h${powerMinutes}m` : `${powerHours}h`;
+
+	// Format outages
+	if (outages.length > 0) {
+		output += `🔴 *Outages* (${outageTimeStr} total):\n`;
+		outages.forEach(slot => {
+			const start = formatMinutes(slot.start);
+			const end = formatMinutes(slot.end);
+			const duration = getDuration(slot.start, slot.end);
+			output += `  • ${start}–${end} (${duration})\n`;
+		});
+	} else {
+		output += `🔴 *Outages* (0h total):\n  • No outages\n`;
+	}
+
+	// Format power
+	output += `🟢 *Power* (${powerTimeStr} total):\n`;
+	power.forEach(slot => {
 		const start = formatMinutes(slot.start);
 		const end = formatMinutes(slot.end);
 		const duration = getDuration(slot.start, slot.end);
-
-		output += `${icon} ${start} – ${end} (${duration})\n`;
+		output += `  • ${start}–${end} (${duration})\n`;
 	});
 
 	return output;
 }
 
 function formatScheduleMessage(zone: string, data: ZoneData, isUpdate = false): string {
-	const now = new Date().toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv' });
 	const header = isUpdate
-		? `⚡️ *Schedule Updated* at ${now}\nZone: *${zone}*\n`
-		: `⚡️ *Current Schedule* for Zone *${zone}*\n`;
+		? `⚡️ *Schedule Updated*\nZone: *${zone}*\n\n`
+		: `⚡️ *Current Schedule*\nZone: *${zone}*\n\n`;
+
+	let footer = '';
+	if (data.updatedOn) {
+		const updatedDate = new Date(data.updatedOn);
+		const updatedStr = updatedDate.toLocaleString('uk-UA', {
+			timeZone: 'Europe/Kyiv',
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+		footer = `\n⏱ Updated: ${updatedStr}`;
+	}
 
 	return header +
-		"\n" + formatDay(data.today, "Today") +
-		"\n" + formatDay(data.tomorrow, "Tomorrow");
+		formatDay(data.today, "Today") +
+		"\n" + formatDay(data.tomorrow, "Tomorrow") +
+		footer;
 }
 
 // --- Helpers: Telegram ---
