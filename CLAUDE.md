@@ -40,7 +40,8 @@ The worker has two main entry points in `src/index.ts`:
 
 1. **`fetch()` handler**: Handles incoming HTTP requests (Telegram webhooks)
    - POST requests process Telegram updates (commands and callback queries)
-   - Handles `/start` command to show zone selector
+   - Handles `/start` command to show zone selector (initial setup)
+   - Handles `/subscribe` command to show zone selector (change zone)
    - Handles `/stop` command to unsubscribe
    - Handles `/now` command to fetch current schedule immediately
    - Processes zone selection callbacks to store subscriptions
@@ -55,10 +56,11 @@ The worker has two main entry points in `src/index.ts`:
 ### Data Flow
 
 #### User Commands
-1. **`/start`** → Bot sends zone selector keyboard
-2. **User selects zone** → Stored in `subscribers` table, immediate schedule sent
-3. **`/now`** → Fetches and displays current schedule for user's subscribed zone
-4. **`/stop`** → Removes user from `subscribers` table
+1. **`/start`** → Bot sends zone selector keyboard (initial setup)
+2. **`/subscribe`** → Bot sends zone selector keyboard (allows changing zone)
+3. **User selects zone** → Stored in `subscribers` table (upsert), immediate schedule sent
+4. **`/now`** → Fetches and displays current schedule for user's subscribed zone
+5. **`/stop`** → Removes user from `subscribers` table
 
 #### Automatic Updates
 1. Cron job runs every 5 minutes → Checks for changes
@@ -74,7 +76,9 @@ The bot compares fresh API data with cached data to detect schedule changes:
 
 ### Message Formatting
 Schedule messages use a simple list format for each day (today and tomorrow):
-- Date header with day of week
+- Date header with day of week and status indicator:
+  - ✅ = Schedule confirmed (ScheduleApplies)
+  - ⏳ = Schedule pending/waiting (WaitingForSchedule)
 - 🔴 **Outages** section: Lists all outage periods with start-end times and durations, plus total outage time
 - 🟢 **Power** section: Lists all power availability periods with start-end times and durations, plus total power time
 - ⏱ **Updated timestamp**: Shows when the API last updated the schedule (from `updatedOn` field)
@@ -84,7 +88,7 @@ Example:
 ⚡️ Current Schedule
 Zone: 1.1
 
-📅 Today (21.11.2025, чт)
+📅 Today (21.11.2025, чт) ✅
 
 🔴 Outages (10h total):
   • 04:00–08:00 (4h)
@@ -93,6 +97,14 @@ Zone: 1.1
   • 00:00–04:00 (4h)
   • 08:00–14:30 (6h30m)
   • 20:30–24:00 (3h30m)
+
+📅 Tomorrow (22.11.2025, пт) ⏳
+
+🔴 Outages (8h total):
+  • 06:00–14:00 (8h)
+🟢 Power (16h total):
+  • 00:00–06:00 (6h)
+  • 14:00–24:00 (10h)
 
 ⏱ Updated: 21.11.2025, 20:29
 ```

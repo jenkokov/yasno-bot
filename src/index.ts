@@ -59,6 +59,8 @@ async function handleTelegramUpdate(update: any, env: any) {
 
 		if (text === '/start') {
 			await sendZoneSelector(chatId, env.TELEGRAM_TOKEN);
+		} else if (text === '/subscribe') {
+			await sendZoneSelector(chatId, env.TELEGRAM_TOKEN);
 		} else if (text === '/stop') {
 			await supabase.from('subscribers').delete().eq('chat_id', chatId);
 			await sendMessage(chatId, "You have unsubscribed from updates.", env.TELEGRAM_TOKEN);
@@ -71,7 +73,7 @@ async function handleTelegramUpdate(update: any, env: any) {
 				.single();
 
 			if (!subscriber) {
-				await sendMessage(chatId, "You are not subscribed to any zone. Use /start to subscribe.", env.TELEGRAM_TOKEN);
+				await sendMessage(chatId, "You are not subscribed to any zone. Use /start or /subscribe to subscribe.", env.TELEGRAM_TOKEN);
 			} else {
 				// Fetch fresh schedule
 				await sendMessage(chatId, `Fetching current schedule for Zone ${subscriber.zone}...`, env.TELEGRAM_TOKEN);
@@ -211,7 +213,10 @@ function formatDay(dayData: DaySchedule, label: string): string {
 	const dateObj = new Date(dayData.date);
 	const dateStr = dateObj.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric', weekday: 'short' });
 
-	let output = `📅 *${label}* (${dateStr})\n\n`;
+	// Status emoji: ✅ for confirmed schedule, ⏳ for waiting
+	const statusEmoji = dayData.status === 'ScheduleApplies' ? '✅' : '⏳';
+
+	let output = `📅 *${label}* (${dateStr}) ${statusEmoji}\n\n`;
 
 	// Get outages and power slots
 	const outages = dayData.slots.filter(slot => slot.type === 'Definite');
