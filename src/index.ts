@@ -69,13 +69,13 @@ const SLOT_TYPE = {
 const ZONES = ['1', '2', '3', '4', '5', '6'] as const;
 
 const MESSAGES = {
-	UNSUBSCRIBED: 'You have unsubscribed from updates.',
-	NOT_SUBSCRIBED: 'You are not subscribed to any zone. Use /start or /subscribe to subscribe.',
-	FETCHING_SCHEDULE: (zone: string) => `Fetching current schedule for Zone ${zone}...`,
-	SUBSCRIBED: (zone: string) => `✅ Subscribed to Zone ${zone}. Fetching current schedule...`,
-	ERROR_FETCHING: 'Unable to fetch schedule data. Please try again later.',
-	ERROR_SUBSCRIPTION: 'Error saving subscription. Please try again.',
-	SELECT_ZONE: 'Please select your Yasno Zone:',
+	UNSUBSCRIBED: 'Ви відписалися від оновлень.',
+	NOT_SUBSCRIBED: 'Ви не підписані на жодну групу. Використайте /start або /subscribe для підписки.',
+	FETCHING_SCHEDULE: (zone: string) => `Завантажуємо поточний розклад для групи ${zone}...`,
+	SUBSCRIBED: (zone: string) => `✅ Підписано на групу ${zone}. Завантажуємо поточний розклад...`,
+	ERROR_FETCHING: 'Не вдалося завантажити дані розкладу. Спробуйте пізніше.',
+	ERROR_SUBSCRIPTION: 'Помилка збереження підписки. Спробуйте ще раз.',
+	SELECT_ZONE: 'Будь ласка, оберіть вашу групу Yasно:',
 } as const;
 
 // ==========================================
@@ -244,7 +244,7 @@ async function handleCallbackQuery(
 		}
 
 		// Acknowledge the button click
-		await answerCallback(callbackQuery.id, `Subscribed to Zone ${zone}`, token);
+		await answerCallback(callbackQuery.id, `Підписано на групу ${zone}`, token);
 
 		// Send current schedule
 		await sendMessage(chatId, MESSAGES.SUBSCRIBED(zone), token);
@@ -471,7 +471,7 @@ function formatDay(dayData: DaySchedule, label: string): string {
 
 	// Format outages section
 	if (outages.length > 0) {
-		output += `🔴 *Outages* (${formatTotalTime(totalOutageMinutes)} total):\n`;
+		output += `🔴 *Відключення* (${formatTotalTime(totalOutageMinutes)} всього):\n`;
 		outages.forEach(slot => {
 			const start = formatMinutes(slot.start);
 			const end = formatMinutes(slot.end);
@@ -479,11 +479,11 @@ function formatDay(dayData: DaySchedule, label: string): string {
 			output += `  • ${start}–${end} (${duration})\n`;
 		});
 	} else {
-		output += `🔴 *Outages* (0h total):\n  • No outages\n`;
+		output += `🔴 *Відключення* (0h всього):\n  • Немає відключень\n`;
 	}
 
 	// Format power section
-	output += `🟢 *Power* (${formatTotalTime(totalPowerMinutes)} total):\n`;
+	output += `🟢 *Електропостачання* (${formatTotalTime(totalPowerMinutes)} всього):\n`;
 	power.forEach(slot => {
 		const start = formatMinutes(slot.start);
 		const end = formatMinutes(slot.end);
@@ -499,14 +499,14 @@ function formatDay(dayData: DaySchedule, label: string): string {
  */
 function formatScheduleMessage(zone: string, data: ZoneData, isUpdate = false): string {
 	const header = isUpdate
-		? `⚡️ *Schedule Updated*\nZone: *${zone}*\n\n`
-		: `⚡️ *Current Schedule*\nZone: *${zone}*\n\n`;
+		? `⚡️ *Розклад оновлено*\nГрупа: *${zone}*\n\n`
+		: `⚡️ *Поточний розклад*\nГрупа: *${zone}*\n\n`;
 
 	const footer = formatUpdateTimestamp(data.updatedOn);
 
 	return header +
-		formatDay(data.today, 'Today') +
-		'\n' + formatDay(data.tomorrow, 'Tomorrow') +
+		formatDay(data.today, 'Сьогодні') +
+		'\n' + formatDay(data.tomorrow, 'Завтра') +
 		footer;
 }
 
@@ -528,7 +528,7 @@ function formatUpdateTimestamp(updatedOn?: string): string {
 		minute: '2-digit'
 	});
 
-	return `\n⏱ Updated: ${updatedStr}`;
+	return `\n⏱ Оновлено: ${updatedStr}`;
 }
 
 // ==========================================
