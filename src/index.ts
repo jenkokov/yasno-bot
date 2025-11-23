@@ -449,6 +449,7 @@ function formatTotalTime(totalMinutes: number): string {
 function formatDay(dayData: DaySchedule, label: string): string {
 	const dateObj = new Date(dayData.date);
 	const dateStr = dateObj.toLocaleDateString('uk-UA', {
+		timeZone: 'Europe/Kyiv',
 		day: '2-digit',
 		month: '2-digit',
 		year: 'numeric',
