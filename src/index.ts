@@ -431,7 +431,7 @@ function getDuration(startMinutes: number, endMinutes: number): string {
 	const diffMinutes = endMinutes - startMinutes;
 	const hours = Math.floor(diffMinutes / 60);
 	const mins = diffMinutes % 60;
-	return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
+	return mins > 0 ? `${hours}г${mins}хв` : `${hours}г`;
 }
 
 /**
@@ -440,7 +440,7 @@ function getDuration(startMinutes: number, endMinutes: number): string {
 function formatTotalTime(totalMinutes: number): string {
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
-	return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+	return minutes > 0 ? `${hours}г${minutes}хв` : `${hours}г`;
 }
 
 /**
@@ -479,7 +479,7 @@ function formatDay(dayData: DaySchedule, label: string): string {
 			output += `  • ${start}–${end} (${duration})\n`;
 		});
 	} else {
-		output += `🔴 *Відключення* (0h всього):\n  • Немає відключень\n`;
+		output += `🔴 *Відключення* (0г всього):\n  • Немає відключень\n`;
 	}
 
 	// Format power section
