@@ -1,0 +1,76 @@
+/**
+ * User database operations
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+/**
+ * Ensure a user exists in the database (create if not exists)
+ * Updates last_interaction_at on each call
+ */
+export async function ensureUser(supabase: SupabaseClient, chatId: number): Promise<number | null> {
+	try {
+		// Try to get existing user
+		const { data: existingUser } = await supabase
+			.from('users')
+			.select('id')
+			.eq('chat_id', chatId)
+			.single();
+
+		if (existingUser) {
+			// Update last interaction time
+			await supabase
+				.from('users')
+				.update({ last_interaction_at: new Date() })
+				.eq('id', existingUser.id);
+
+			return existingUser.id;
+		}
+
+		// Create new user
+		const { data: newUser, error } = await supabase
+			.from('users')
+			.insert({ chat_id: chatId })
+			.select('id')
+			.single();
+
+		if (error) {
+			console.error('Error creating user:', error);
+			return null;
+		}
+
+		return newUser?.id ?? null;
+	} catch (error) {
+		console.error('Error ensuring user exists:', error);
+		return null;
+	}
+}
+
+/**
+ * Get user ID by chat ID
+ */
+export async function getUserId(supabase: SupabaseClient, chatId: number): Promise<number | null> {
+	const { data } = await supabase
+		.from('users')
+		.select('id')
+		.eq('chat_id', chatId)
+		.single();
+
+	return data?.id ?? null;
+}
+
+/**
+ * Get all unique chat IDs (for broadcast)
+ */
+export async function getAllChatIds(supabase: SupabaseClient): Promise<number[]> {
+	const { data, error } = await supabase
+		.from('users')
+		.select('chat_id');
+
+	if (error) {
+		console.error('Error fetching all chat IDs:', error);
+		return [];
+	}
+
+	return data?.map(u => u.chat_id) ?? [];
+}
