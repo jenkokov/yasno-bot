@@ -71,8 +71,6 @@ const ZONES = ['1', '2', '3', '4', '5', '6'] as const;
 const MESSAGES = {
 	UNSUBSCRIBED: 'Ви відписалися від оновлень.',
 	NOT_SUBSCRIBED: 'Ви не підписані на жодну групу. Використайте /start або /subscribe для підписки.',
-	FETCHING_SCHEDULE: (zone: string) => `Завантажуємо поточний розклад для групи ${zone}...`,
-	SUBSCRIBED: (zone: string) => `✅ Підписано на групу ${zone}. Завантажуємо поточний розклад...`,
 	ERROR_FETCHING: 'Не вдалося завантажити дані розкладу. Спробуйте пізніше.',
 	ERROR_SUBSCRIPTION: 'Помилка збереження підписки. Спробуйте ще раз.',
 	SELECT_ZONE: 'Будь ласка, оберіть вашу групу Yasно:',
@@ -148,6 +146,9 @@ async function handleCommand(
 		case '/now':
 			await handleNowCommand(chatId, supabase, token);
 			break;
+		case '/test':
+			await handleTestCommand(chatId, token);
+			break;
 		default:
 			// Ignore unknown commands
 			break;
@@ -178,6 +179,48 @@ async function handleStopCommand(
 }
 
 /**
+ * Handle /test command - test API connectivity
+ */
+async function handleTestCommand(chatId: number, token: string): Promise<void> {
+	try {
+		await sendMessage(chatId, '🔍 Тестуємо з\'єднання з API Yasno...', token);
+
+		const startTime = Date.now();
+		const freshData = await fetchYasnoData();
+		const duration = Date.now() - startTime;
+
+		if (freshData) {
+			const zones = Object.keys(freshData);
+			const zoneList = zones.join(', ');
+			const hasUpdatedOn = freshData[zones[0]]?.updatedOn;
+
+			const report = `✅ API працює!\n\n` +
+				`⏱ Час відповіді: ${duration}ms\n` +
+				`📊 Отримано зон: ${zones.length}\n` +
+				`🗂 Зони: ${zoneList}\n` +
+				`📅 Має updatedOn: ${hasUpdatedOn ? 'Так' : 'Ні'}`;
+
+			await sendMessage(chatId, report, token);
+		} else {
+			await sendMessage(
+				chatId,
+				`❌ API не відповідає\n\n` +
+				`⏱ Час спроби: ${duration}ms\n\n` +
+				`Перевірте логи Cloudflare Workers для деталей помилки.`,
+				token
+			);
+		}
+	} catch (error) {
+		console.error('Error in test command:', error);
+		await sendMessage(
+			chatId,
+			`❌ Помилка тестування: ${error instanceof Error ? error.message : 'Невідома помилка'}`,
+			token
+		);
+	}
+}
+
+/**
  * Handle /now command - fetch and display current schedule
  */
 async function handleNowCommand(
@@ -198,12 +241,11 @@ async function handleNowCommand(
 			return;
 		}
 
-		// Fetch and send current schedule
-		await sendMessage(chatId, MESSAGES.FETCHING_SCHEDULE(subscriber.zone), token);
-		const currentData = await fetchYasnoData();
+		// Get cached schedule data
+		const cachedData = await getCachedData(supabase);
 
-		if (currentData && currentData[subscriber.zone]) {
-			const msg = formatScheduleMessage(subscriber.zone, currentData[subscriber.zone]);
+		if (cachedData && cachedData[subscriber.zone]) {
+			const msg = formatScheduleMessage(subscriber.zone, cachedData[subscriber.zone]);
 			await sendMessage(chatId, msg, token);
 		} else {
 			await sendMessage(chatId, MESSAGES.ERROR_FETCHING, token);
@@ -246,13 +288,14 @@ async function handleCallbackQuery(
 		// Acknowledge the button click
 		await answerCallback(callbackQuery.id, `Підписано на групу ${zone}`, token);
 
-		// Send current schedule
-		await sendMessage(chatId, MESSAGES.SUBSCRIBED(zone), token);
-		const currentData = await fetchYasnoData();
+		// Send current schedule from cache
+		const cachedData = await getCachedData(supabase);
 
-		if (currentData && currentData[zone]) {
-			const msg = formatScheduleMessage(zone, currentData[zone]);
+		if (cachedData && cachedData[zone]) {
+			const msg = formatScheduleMessage(zone, cachedData[zone]);
 			await sendMessage(chatId, msg, token);
+		} else {
+			await sendMessage(chatId, MESSAGES.ERROR_FETCHING, token);
 		}
 	} catch (error) {
 		console.error('Error handling zone selection:', error);
@@ -271,11 +314,20 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 	const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
 
 	try {
-		// Fetch fresh data from Yasno API
-		const freshData = await fetchYasnoData();
+		// Fetch fresh data from Yasno API with retry logic
+		let freshData = await fetchYasnoData();
+
+		// Retry once after 2 seconds if first attempt failed
 		if (!freshData) {
-			console.log('Failed to fetch data from Yasno API');
-			await saveToHistory(supabase, {}, [], 'API fetch failed');
+			console.log('First fetch attempt failed, retrying in 2 seconds...');
+			await new Promise(resolve => setTimeout(resolve, 2000));
+			freshData = await fetchYasnoData();
+		}
+
+		if (!freshData) {
+			const timestamp = new Date().toISOString();
+			console.log(`Failed to fetch data from Yasno API at ${timestamp}`);
+			await saveToHistory(supabase, {}, [], `API fetch failed at ${timestamp} (after retry)`);
 			return;
 		}
 
@@ -307,6 +359,17 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 		await updateCache(supabase, freshData);
 	} catch (error) {
 		console.error('Error checking schedule updates:', error);
+		// Try to save error details to history
+		try {
+			await saveToHistory(
+				supabase,
+				{},
+				[],
+				`Error in checkScheduleUpdates: ${error instanceof Error ? error.message : String(error)}`
+			);
+		} catch (historyError) {
+			console.error('Failed to save error to history:', historyError);
+		}
 	}
 }
 
@@ -498,9 +561,15 @@ async function saveToHistory(
  */
 async function fetchYasnoData(): Promise<YasnoResponse | null> {
 	try {
-		const response = await fetch(YASNO_API);
+		const response = await fetch(YASNO_API, {
+			headers: {
+				'User-Agent': 'YasnoBot/1.0',
+				'Accept': 'application/json'
+			}
+		});
 		if (!response.ok) {
-			console.error(`Yasno API returned status ${response.status}`);
+			const errorText = await response.text();
+			console.error(`Yasno API returned status ${response.status}: ${errorText}`);
 			return null;
 		}
 		return await response.json() as YasnoResponse;
