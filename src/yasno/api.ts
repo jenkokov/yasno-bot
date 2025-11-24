@@ -3,8 +3,26 @@
  */
 
 import type { YasnoResponse } from '../types';
-import { YASNO_API, YASNO_API_HEADERS, getRandomUserAgent } from '../config/constants';
+import { YASNO_API, YASNO_API_HEADERS } from '../config/constants';
 import { fetchProxies, selectRandomProxies } from './proxy';
+
+/**
+ * Browser-like user agents for rotation
+ */
+const USER_AGENTS = [
+	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+	'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
+	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15',
+	'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+] as const;
+
+/**
+ * Get random user agent for request variety
+ */
+function getRandomUserAgent(): string {
+	return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
 
 /**
  * Fetch schedule data from Yasno API with a specific proxy

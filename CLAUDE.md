@@ -95,12 +95,8 @@ The database uses **separated users and subscriptions** for better data manageme
   - `changed_zones` (TEXT[]) - Zones that changed
   - `notes` (TEXT) - Debug notes
 
-#### Migration from Old Schema
-The migration script (`003_separate_users_subscriptions.sql`) handles:
-- Creating new `users` and `subscriptions` tables
-- Migrating existing data from old `subscribers` table
-- Creating a compatibility view for backward compatibility
-- Preserving the old table as `subscribers_backup` for safety
+#### Database Setup
+The complete database schema is in `migrations/000_complete_schema.sql`. This single file creates all required tables, indexes, and constraints. It can be run on a fresh database to set up the entire schema.
 
 ### Entry Points
 

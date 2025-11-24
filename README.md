@@ -8,18 +8,24 @@ A Telegram bot that monitors Ukrainian power outage schedules from the Yasno API
 
 - 🤖 **Telegram Bot Interface** - Easy zone subscription via inline keyboards
 - ⚡ **Automatic Notifications** - Get notified when schedules change for your zone
-- 🔄 **Real-time Updates** - Checks Yasno API every 5 minutes via cron
-- 📊 **Smart Change Detection** - Uses timestamps to detect schedule updates reliably
+- 🔄 **Real-time Updates** - Checks Yasno API every 10 minutes via cron
+- 📊 **Smart Change Detection** - Deep comparison of schedule data to detect changes reliably
+- 📤 **Bulk Notifications** - Efficient rate-limited message sending (30 msgs/sec)
 - 🗄️ **Persistent Storage** - Supabase integration for subscribers and cache
 - ☁️ **Serverless Deployment** - Runs on Cloudflare Workers
 - 🔒 **Type-Safe** - Written in TypeScript with full type coverage
 
 ## Bot Commands
 
+### User Commands
 - `/start` - Subscribe to a power zone (initial setup)
 - `/subscribe` - Change your subscribed zone
-- `/now` - Get current schedule immediately
+- `/now` - Get current schedule immediately (from cache)
 - `/stop` - Unsubscribe from updates
+- `/test` - Test API connectivity and display diagnostic information
+
+### Admin Commands
+- `/broadcast <message>` - Send a message to all active subscribers (admin only)
 
 ## Supported Zones
 
@@ -70,23 +76,36 @@ Zone: 1.1
 ### How It Works
 
 1. **User Subscription**: Users select their zone via Telegram bot
-2. **Schedule Monitoring**: Cron job checks Yasno API every 5 minutes
-3. **Change Detection**: Compares fresh data with cached data using timestamps
-4. **Notifications**: Sends updates to all subscribers of changed zones
+2. **Schedule Monitoring**: Cron job checks Yasno API every 10 minutes
+3. **Change Detection**: Deep comparison of schedule data (slots and status) for today and tomorrow
+4. **Bulk Notifications**: Groups subscribers by zone and sends updates with rate limiting (30 msgs/sec)
 5. **Cache Update**: Stores latest schedule data in Supabase
+6. **History Logging**: Records all schedule changes with details for debugging
 
 ### Code Organization
 
 ```
-src/index.ts
-├── Type Definitions       # TypeScript interfaces
-├── Constants              # Configuration & messages
-├── Worker Entry Points    # Fetch & scheduled handlers
-├── Telegram Handling      # Command routing & handlers
-├── Schedule Checking      # Change detection & notifications
-├── Yasno API              # External API integration
-├── Message Formatting     # Schedule display logic
-└── Telegram API Helpers   # Bot communication
+src/
+├── index.ts                 # Main entry point (fetch & scheduled handlers)
+├── types/
+│   └── index.ts            # All TypeScript interfaces and types
+├── config/
+│   └── constants.ts        # Configuration constants (API URLs, messages, etc.)
+├── database/
+│   ├── client.ts           # Supabase client initialization
+│   ├── users.ts            # User CRUD operations
+│   ├── subscriptions.ts    # Subscription CRUD operations
+│   └── cache.ts            # Cache and history operations
+├── telegram/
+│   ├── api.ts              # Telegram Bot API helpers (sendMessage, bulk sending)
+│   ├── handlers.ts         # Command handlers (start, stop, now, broadcast, etc.)
+│   └── keyboards.ts        # Inline keyboard builders
+├── yasno/
+│   ├── api.ts              # Yasno API fetching with retry logic
+│   ├── changes.ts          # Schedule change detection logic
+│   └── formatter.ts        # Schedule message formatting
+└── services/
+    └── scheduler.ts        # Cron job orchestration and bulk notifications
 ```
 
 ## Setup & Deployment
@@ -108,26 +127,28 @@ npm install
 
 ### 2. Set Up Supabase
 
-Create two tables in your Supabase project:
+Run the complete schema file to create all required tables, indexes, and constraints:
 
-```sql
--- Subscribers table
-CREATE TABLE subscribers (
-  chat_id BIGINT PRIMARY KEY,
-  zone TEXT NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+```bash
+# Using Supabase CLI
+supabase db reset
 
--- Schedule cache table
-CREATE TABLE schedule_cache (
-  id INTEGER PRIMARY KEY DEFAULT 1,
-  raw_data JSONB NOT NULL,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Initialize cache with empty data
-INSERT INTO schedule_cache (id, raw_data) VALUES (1, '{}');
+# Or manually via SQL Editor in Supabase Dashboard:
+# Copy and execute the contents of migrations/000_complete_schema.sql
 ```
+
+The schema creates:
+- **`users`** - All Telegram users who have interacted with the bot (persisted)
+- **`subscriptions`** - Active zone subscriptions (one per user)
+- **`schedule_cache`** - Cached Yasno API response (single-row table)
+- **`schedule_history`** - Historical log for debugging and auditing
+
+All tables have:
+- Row Level Security (RLS) enabled
+- Proper indexes for performance
+- Descriptive comments for documentation
+
+**Note**: The database uses separated `users` and `subscriptions` tables for better data management. Users are persisted even after unsubscribing, while subscriptions can be created/deleted independently.
 
 ### 3. Configure Secrets
 
@@ -205,7 +226,7 @@ Edit `wrangler.jsonc` to customize:
   "name": "yasno-bot",                    // Worker name
   "compatibility_date": "2025-11-21",     // Cloudflare compatibility date
   "triggers": {
-    "crons": ["*/5 * * * *"]              // Schedule check frequency
+    "crons": ["*/10 * * * *"]             // Schedule check frequency (every 10 minutes)
   }
 }
 ```
@@ -216,21 +237,71 @@ Edit `wrangler.jsonc` to customize:
 yasno-bot/
 ├── .github/
 │   └── workflows/
-│       ├── deploy.yml          # Deployment workflow
-│       └── test.yml            # Testing workflow
+│       ├── deploy.yml              # Deployment workflow
+│       └── test.yml                # Testing workflow
 ├── src/
-│   └── index.ts                # Main worker code
+│   ├── index.ts                    # Main entry point
+│   ├── types/
+│   │   └── index.ts                # TypeScript interfaces
+│   ├── config/
+│   │   └── constants.ts            # Configuration constants
+│   ├── database/
+│   │   ├── client.ts               # Supabase client
+│   │   ├── users.ts                # User operations
+│   │   ├── subscriptions.ts        # Subscription operations
+│   │   └── cache.ts                # Cache operations
+│   ├── telegram/
+│   │   ├── api.ts                  # Bot API helpers
+│   │   ├── handlers.ts             # Command handlers
+│   │   └── keyboards.ts            # Inline keyboards
+│   ├── yasno/
+│   │   ├── api.ts                  # Yasno API client
+│   │   ├── changes.ts              # Change detection
+│   │   └── formatter.ts            # Message formatting
+│   └── services/
+│       └── scheduler.ts            # Cron job logic
+├── migrations/                     # Database migration scripts
 ├── test/
-│   └── index.spec.ts           # Tests
-├── .gitignore                  # Git ignore rules
-├── .env.example                # Environment variables template
-├── CLAUDE.md                   # Development guide
-├── package.json                # Dependencies
-├── tsconfig.json               # TypeScript config
-├── vitest.config.mts           # Test config
-├── wrangler.jsonc              # Cloudflare Workers config
-└── README.md                   # This file
+│   └── index.spec.ts               # Tests
+├── .gitignore                      # Git ignore rules
+├── .env.example                    # Environment variables template
+├── CLAUDE.md                       # Development guide
+├── package.json                    # Dependencies
+├── tsconfig.json                   # TypeScript config
+├── vitest.config.mts               # Test config
+├── wrangler.jsonc                  # Cloudflare Workers config
+└── README.md                       # This file
 ```
+
+## Technical Details
+
+### Change Detection
+
+The bot uses deep comparison to detect schedule changes:
+- Compares schedule data (slots and status) for today and tomorrow
+- Ignores date strings and timestamp fields to prevent false positives
+- On first run, all zones are marked as changed if no cache exists
+- Detailed logging tracks specific changes (slots, status, counts)
+
+### Bulk Notification System
+
+Efficient message delivery to handle many subscribers:
+- **Grouping**: Subscribers are grouped by zone to avoid duplicate sends
+- **Rate Limiting**: Respects Telegram's 30 messages/second limit
+- **Chunking**: Processes subscribers in chunks of 30
+- **Delays**: Waits 1 second between chunks
+- **Parallel Sending**: Sends messages in parallel within each chunk
+- **Error Handling**: Tracks successful and failed sends
+
+### Database Design
+
+The database uses a **separated users and subscriptions** model:
+- **users**: Persists all users (retained even after unsubscribing)
+- **subscriptions**: Stores active zone subscriptions (one per user)
+- **schedule_cache**: Single-row table for latest API response
+- **schedule_history**: Historical log for debugging and auditing
+
+This design allows better data management and keeps user history even when subscriptions are removed.
 
 ## API Reference
 
@@ -252,6 +323,8 @@ Response structure:
   // ... other zones
 }
 ```
+
+**Note**: The API uses browser-like headers to avoid WAF blocking. Retry logic is implemented for resilience.
 
 ## Contributing
 
