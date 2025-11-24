@@ -317,10 +317,11 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 		// Fetch fresh data from Yasno API with retry logic
 		let freshData = await fetchYasnoData();
 
-		// Retry once after 2 seconds if first attempt failed
+		// Retry once after 3-5 seconds if first attempt failed (random delay to appear more human-like)
 		if (!freshData) {
-			console.log('First fetch attempt failed, retrying in 2 seconds...');
-			await new Promise(resolve => setTimeout(resolve, 2000));
+			const retryDelay = 3000 + Math.floor(Math.random() * 2000); // 3-5 seconds
+			console.log(`First fetch attempt failed, retrying in ${retryDelay}ms...`);
+			await new Promise(resolve => setTimeout(resolve, retryDelay));
 			freshData = await fetchYasnoData();
 		}
 
@@ -558,18 +559,29 @@ async function saveToHistory(
 
 /**
  * Fetch schedule data from Yasno API
+ * Uses browser-like headers to avoid WAF blocking
  */
 async function fetchYasnoData(): Promise<YasnoResponse | null> {
 	try {
 		const response = await fetch(YASNO_API, {
 			headers: {
-				'User-Agent': 'YasnoBot/1.0',
-				'Accept': 'application/json'
+				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+				'Accept': 'application/json, text/plain, */*',
+				'Accept-Language': 'uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7',
+				'Accept-Encoding': 'gzip, deflate, br',
+				'Referer': 'https://app.yasno.ua/',
+				'Origin': 'https://app.yasno.ua',
+				'Sec-Fetch-Dest': 'empty',
+				'Sec-Fetch-Mode': 'cors',
+				'Sec-Fetch-Site': 'same-origin',
+				'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+				'sec-ch-ua-mobile': '?0',
+				'sec-ch-ua-platform': '"Windows"'
 			}
 		});
 		if (!response.ok) {
 			const errorText = await response.text();
-			console.error(`Yasno API returned status ${response.status}: ${errorText}`);
+			console.error(`Yasno API returned status ${response.status}: ${errorText.substring(0, 500)}`);
 			return null;
 		}
 		return await response.json() as YasnoResponse;
