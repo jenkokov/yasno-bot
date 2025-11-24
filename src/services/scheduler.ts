@@ -1,7 +1,3 @@
-/**
- * Scheduled task service - handles cron job logic
- */
-
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { YasnoResponse } from '../types';
 import { fetchYasnoDataWithRetry } from '../yasno/api';
@@ -20,13 +16,11 @@ export async function checkScheduleUpdates(
 	telegramToken: string,
 	webshareKey: string
 ): Promise<void> {
-	// Add random delay (0-15 seconds) to avoid predictable request patterns
 	const randomDelay = Math.floor(Math.random() * 15000);
 	console.log(`Initial random delay: ${randomDelay}ms to avoid predictable patterns`);
 	await new Promise(resolve => setTimeout(resolve, randomDelay));
 
 	try {
-		// Fetch fresh data from Yasno API with retry logic
 		const freshData = await fetchYasnoDataWithRetry(webshareKey);
 
 		if (!freshData) {
@@ -36,13 +30,10 @@ export async function checkScheduleUpdates(
 			return;
 		}
 
-		// Fetch cached data from database
 		const cachedData = await getCachedData(supabase);
 
-		// Detect which zones have changed
 		const changedZones = detectChangedZones(freshData, cachedData);
 
-		// Always save to history for debugging (even if no changes)
 		await saveToHistory(
 			supabase,
 			freshData,
@@ -57,14 +48,12 @@ export async function checkScheduleUpdates(
 
 		console.log(`Schedule changes detected in zones: ${changedZones.join(', ')}`);
 
-		// Notify subscribers of changed zones using bulk sending
 		await notifySubscribersOfChanges(changedZones, freshData, supabase, telegramToken);
 
 		// Update cache with fresh data
 		await updateCache(supabase, freshData);
 	} catch (error) {
 		console.error('Error checking schedule updates:', error);
-		// Try to save error details to history
 		try {
 			await saveToHistory(
 				supabase,
@@ -78,20 +67,14 @@ export async function checkScheduleUpdates(
 	}
 }
 
-/**
- * Notify all subscribers of changed zones using efficient bulk sending
- * Groups subscribers by zone and sends in batches
- */
 async function notifySubscribersOfChanges(
 	changedZones: string[],
 	freshData: YasnoResponse,
 	supabase: SupabaseClient,
 	telegramToken: string
 ): Promise<void> {
-	// Get all subscribers grouped by zone
 	const subscribersByZone = await getAllSubscribersGroupedByZone(supabase);
 
-	// Process each changed zone
 	for (const zone of changedZones) {
 		const chatIds = subscribersByZone[zone];
 
@@ -102,10 +85,8 @@ async function notifySubscribersOfChanges(
 
 		console.log(`Notifying ${chatIds.length} subscribers for zone ${zone}`);
 
-		// Format the message once for all subscribers
 		const message = formatScheduleMessage(zone, freshData[zone], true);
 
-		// Send to all subscribers using bulk sending with rate limiting
 		const { successful, failed } = await sendBulkMessages(chatIds, message, telegramToken);
 
 		console.log(`Zone ${zone}: ${successful} sent, ${failed} failed out of ${chatIds.length} total`);

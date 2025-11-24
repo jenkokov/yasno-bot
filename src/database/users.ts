@@ -1,7 +1,3 @@
-/**
- * User database operations
- */
-
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -10,7 +6,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  */
 export async function ensureUser(supabase: SupabaseClient, chatId: number): Promise<number | null> {
 	try {
-		// Try to get existing user
 		const { data: existingUser, error: selectError } = await supabase
 			.from('users')
 			.select('id')
@@ -32,7 +27,6 @@ export async function ensureUser(supabase: SupabaseClient, chatId: number): Prom
 			return existingUser.id;
 		}
 
-		// Create new user
 		const { data: newUser, error } = await supabase
 			.from('users')
 			.insert({ chat_id: chatId })
@@ -51,9 +45,6 @@ export async function ensureUser(supabase: SupabaseClient, chatId: number): Prom
 	}
 }
 
-/**
- * Get user ID by chat ID
- */
 export async function getUserId(supabase: SupabaseClient, chatId: number): Promise<number | null> {
 	const { data } = await supabase
 		.from('users')
@@ -64,18 +55,3 @@ export async function getUserId(supabase: SupabaseClient, chatId: number): Promi
 	return data?.id ?? null;
 }
 
-/**
- * Get all unique chat IDs (for broadcast)
- */
-export async function getAllChatIds(supabase: SupabaseClient): Promise<number[]> {
-	const { data, error } = await supabase
-		.from('users')
-		.select('chat_id');
-
-	if (error) {
-		console.error('Error fetching all chat IDs:', error);
-		return [];
-	}
-
-	return data?.map(u => u.chat_id) ?? [];
-}

@@ -168,7 +168,6 @@ Implementation in `telegram/api.ts`:
 - **`users.ts`**:
   - `ensureUser()` - Create user if not exists, update last interaction
   - `getUserId()` - Get user ID by chat ID
-  - `getAllChatIds()` - Get all chat IDs for broadcast
 
 - **`subscriptions.ts`**:
   - `subscribeUser()` - Subscribe user to zone (upsert)
