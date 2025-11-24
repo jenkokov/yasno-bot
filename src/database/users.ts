@@ -11,11 +11,16 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export async function ensureUser(supabase: SupabaseClient, chatId: number): Promise<number | null> {
 	try {
 		// Try to get existing user
-		const { data: existingUser } = await supabase
+		const { data: existingUser, error: selectError } = await supabase
 			.from('users')
 			.select('id')
 			.eq('chat_id', chatId)
 			.single();
+
+		if (selectError && selectError.code !== 'PGRST116') {
+			// PGRST116 is "not found", which is expected. Other errors are problems.
+			console.error('Error selecting user:', selectError);
+		}
 
 		if (existingUser) {
 			// Update last interaction time
@@ -41,7 +46,7 @@ export async function ensureUser(supabase: SupabaseClient, chatId: number): Prom
 
 		return newUser?.id ?? null;
 	} catch (error) {
-		console.error('Error ensuring user exists:', error);
+		console.error('Error in ensureUser:', error);
 		return null;
 	}
 }

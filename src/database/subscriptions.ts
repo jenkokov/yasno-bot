@@ -104,18 +104,35 @@ export async function getZoneSubscribers(
 	zone: string
 ): Promise<number[]> {
 	try {
-		const { data, error } = await supabase
+		// Get user_ids for this zone
+		const { data: subscriptions, error: subError } = await supabase
 			.from('subscriptions')
-			.select('user_id, users!inner(chat_id)')
+			.select('user_id')
 			.eq('zone', zone);
 
-		if (error) {
-			console.error('Error fetching zone subscribers:', error);
+		if (subError) {
+			console.error('Error fetching zone subscriptions:', subError);
 			return [];
 		}
 
-		// Extract chat_ids from the joined user data
-		return data?.map((sub: any) => sub.users.chat_id) ?? [];
+		if (!subscriptions || subscriptions.length === 0) {
+			return [];
+		}
+
+		const userIds = subscriptions.map(s => s.user_id);
+
+		// Get chat_ids for these users
+		const { data: users, error: userError } = await supabase
+			.from('users')
+			.select('chat_id')
+			.in('id', userIds);
+
+		if (userError) {
+			console.error('Error fetching users:', userError);
+			return [];
+		}
+
+		return users?.map(u => u.chat_id) ?? [];
 	} catch (error) {
 		console.error('Error in getZoneSubscribers:', error);
 		return [];
@@ -129,25 +146,50 @@ export async function getAllSubscribersGroupedByZone(
 	supabase: SupabaseClient
 ): Promise<ZoneSubscribers> {
 	try {
-		const { data, error } = await supabase
+		// Get all subscriptions
+		const { data: subscriptions, error: subError } = await supabase
 			.from('subscriptions')
-			.select('zone, user_id, users!inner(chat_id)');
+			.select('zone, user_id');
 
-		if (error) {
-			console.error('Error fetching subscribers:', error);
+		if (subError) {
+			console.error('Error fetching subscriptions:', subError);
 			return {};
+		}
+
+		if (!subscriptions || subscriptions.length === 0) {
+			return {};
+		}
+
+		// Get all unique user_ids
+		const userIds = [...new Set(subscriptions.map(s => s.user_id))];
+
+		// Get all users
+		const { data: users, error: userError } = await supabase
+			.from('users')
+			.select('id, chat_id')
+			.in('id', userIds);
+
+		if (userError) {
+			console.error('Error fetching users:', userError);
+			return {};
+		}
+
+		// Create a map of user_id -> chat_id
+		const userMap = new Map<number, number>();
+		for (const user of users || []) {
+			userMap.set(user.id, user.chat_id);
 		}
 
 		// Group by zone
 		const grouped: ZoneSubscribers = {};
-		for (const sub of data || []) {
-			const zone = sub.zone;
-			const chatId = (sub.users as any).chat_id;
+		for (const sub of subscriptions) {
+			const chatId = userMap.get(sub.user_id);
+			if (!chatId) continue;
 
-			if (!grouped[zone]) {
-				grouped[zone] = [];
+			if (!grouped[sub.zone]) {
+				grouped[sub.zone] = [];
 			}
-			grouped[zone].push(chatId);
+			grouped[sub.zone].push(chatId);
 		}
 
 		return grouped;
@@ -162,19 +204,50 @@ export async function getAllSubscribersGroupedByZone(
  */
 export async function getAllSubscribers(supabase: SupabaseClient): Promise<SubscriberInfo[]> {
 	try {
-		const { data, error } = await supabase
+		// Get all subscriptions
+		const { data: subscriptions, error: subError } = await supabase
 			.from('subscriptions')
-			.select('zone, user_id, users!inner(chat_id)');
+			.select('zone, user_id');
 
-		if (error) {
-			console.error('Error fetching all subscribers:', error);
+		if (subError) {
+			console.error('Error fetching all subscriptions:', subError);
 			return [];
 		}
 
-		return data?.map((sub: any) => ({
-			chat_id: sub.users.chat_id,
-			zone: sub.zone
-		})) ?? [];
+		if (!subscriptions || subscriptions.length === 0) {
+			return [];
+		}
+
+		// Get all unique user_ids
+		const userIds = [...new Set(subscriptions.map(s => s.user_id))];
+
+		// Get all users
+		const { data: users, error: userError } = await supabase
+			.from('users')
+			.select('id, chat_id')
+			.in('id', userIds);
+
+		if (userError) {
+			console.error('Error fetching users:', userError);
+			return [];
+		}
+
+		// Create a map of user_id -> chat_id
+		const userMap = new Map<number, number>();
+		for (const user of users || []) {
+			userMap.set(user.id, user.chat_id);
+		}
+
+		// Map to SubscriberInfo
+		const result: SubscriberInfo[] = [];
+		for (const sub of subscriptions) {
+			const chatId = userMap.get(sub.user_id);
+			if (chatId) {
+				result.push({ chat_id: chatId, zone: sub.zone });
+			}
+		}
+
+		return result;
 	} catch (error) {
 		console.error('Error in getAllSubscribers:', error);
 		return [];
