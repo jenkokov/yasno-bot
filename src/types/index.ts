@@ -9,6 +9,7 @@ export interface Env {
 	TELEGRAM_TOKEN: string;
 	SUPABASE_URL: string;
 	SUPABASE_KEY: string;
+	WEBSHARE_KEY: string;
 }
 
 /**

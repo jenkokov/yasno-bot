@@ -39,7 +39,7 @@ async function fetch(request: Request, env: Env, _ctx: ExecutionContext): Promis
  */
 async function scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
 	const supabase = createSupabaseClient(env);
-	await checkScheduleUpdates(supabase, env.TELEGRAM_TOKEN);
+	await checkScheduleUpdates(supabase, env.TELEGRAM_TOKEN, env.WEBSHARE_KEY);
 }
 
 // Export as Cloudflare Worker

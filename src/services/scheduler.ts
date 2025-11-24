@@ -17,7 +17,8 @@ import { sendBulkMessages } from '../telegram/api';
  */
 export async function checkScheduleUpdates(
 	supabase: SupabaseClient,
-	telegramToken: string
+	telegramToken: string,
+	webshareKey: string
 ): Promise<void> {
 	// Add random delay (0-15 seconds) to avoid predictable request patterns
 	const randomDelay = Math.floor(Math.random() * 15000);
@@ -26,7 +27,7 @@ export async function checkScheduleUpdates(
 
 	try {
 		// Fetch fresh data from Yasno API with retry logic
-		const freshData = await fetchYasnoDataWithRetry();
+		const freshData = await fetchYasnoDataWithRetry(webshareKey);
 
 		if (!freshData) {
 			const timestamp = new Date().toISOString();
