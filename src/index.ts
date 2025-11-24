@@ -68,6 +68,8 @@ const SLOT_TYPE = {
 
 const ZONES = ['1', '2', '3', '4', '5', '6'] as const;
 
+const ADMIN_CHAT_ID = 67306153;
+
 const MESSAGES = {
 	UNSUBSCRIBED: 'Ви відписалися від оновлень.',
 	NOT_SUBSCRIBED: 'Ви не підписані на жодну групу. Використайте /start або /subscribe для підписки.',
@@ -135,6 +137,13 @@ async function handleCommand(
 	supabase: SupabaseClient,
 	token: string
 ): Promise<void> {
+	// Handle broadcast command with message text
+	if (command.startsWith('/broadcast ')) {
+		const message = command.substring('/broadcast '.length);
+		await handleBroadcastCommand(chatId, message, supabase, token);
+		return;
+	}
+
 	switch (command) {
 		case '/start':
 		case '/subscribe':
@@ -215,6 +224,70 @@ async function handleTestCommand(chatId: number, token: string): Promise<void> {
 		await sendMessage(
 			chatId,
 			`❌ Помилка тестування: ${error instanceof Error ? error.message : 'Невідома помилка'}`,
+			token
+		);
+	}
+}
+
+/**
+ * Handle /broadcast command - admin only, send message to all subscribers
+ */
+async function handleBroadcastCommand(
+	chatId: number,
+	message: string,
+	supabase: SupabaseClient,
+	token: string
+): Promise<void> {
+	// Only allow admin to broadcast
+	if (chatId !== ADMIN_CHAT_ID) {
+		console.log(`Unauthorized broadcast attempt from chat_id: ${chatId}`);
+		return;
+	}
+
+	try {
+		await sendMessage(chatId, '📢 Розсилаємо повідомлення...', token);
+
+		// Get all unique subscribers
+		const { data: subscribers, error } = await supabase
+			.from('subscribers')
+			.select('chat_id');
+
+		if (error) {
+			console.error('Error fetching subscribers for broadcast:', error);
+			await sendMessage(chatId, '❌ Помилка отримання списку підписників', token);
+			return;
+		}
+
+		if (!subscribers || subscribers.length === 0) {
+			await sendMessage(chatId, 'ℹ️ Немає підписників для розсилки', token);
+			return;
+		}
+
+		// Get unique chat IDs
+		const uniqueChatIds = [...new Set(subscribers.map(s => s.chat_id))];
+
+		// Send message to all subscribers
+		const results = await Promise.allSettled(
+			uniqueChatIds.map(id => sendMessage(id, message, token))
+		);
+
+		// Count successes and failures
+		const successful = results.filter(r => r.status === 'fulfilled').length;
+		const failed = results.filter(r => r.status === 'rejected').length;
+
+		await sendMessage(
+			chatId,
+			`✅ Розсилка завершена!\n\n` +
+			`📤 Надіслано: ${successful}\n` +
+			`❌ Помилки: ${failed}\n` +
+			`👥 Всього підписників: ${uniqueChatIds.length}`,
+			token
+		);
+	} catch (error) {
+		console.error('Error in broadcast command:', error);
+		await sendMessage(
+			chatId,
+			`❌ Помилка розсилки: ${error instanceof Error ? error.message : 'Невідома помилка'}`,
 			token
 		);
 	}
