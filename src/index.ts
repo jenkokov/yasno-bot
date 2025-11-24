@@ -311,6 +311,11 @@ async function handleCallbackQuery(
  * Check for schedule updates and notify subscribers
  */
 async function checkScheduleUpdates(env: Env): Promise<void> {
+	// Add random delay (0-30 seconds) to avoid predictable request patterns
+	const randomDelay = Math.floor(Math.random() * 15000); // 0-15 seconds
+	console.log(`Initial random delay: ${randomDelay}ms to avoid predictable patterns`);
+	await new Promise(resolve => setTimeout(resolve, randomDelay));
+
 	const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
 
 	try {
