@@ -275,6 +275,7 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 		const freshData = await fetchYasnoData();
 		if (!freshData) {
 			console.log('Failed to fetch data from Yasno API');
+			await saveToHistory(supabase, {}, [], 'API fetch failed');
 			return;
 		}
 
@@ -283,6 +284,14 @@ async function checkScheduleUpdates(env: Env): Promise<void> {
 
 		// Detect which zones have changed
 		const changedZones = detectChangedZones(freshData, cachedData);
+
+		// Always save to history for debugging (even if no changes)
+		await saveToHistory(
+			supabase,
+			freshData,
+			changedZones,
+			changedZones.length === 0 ? 'No changes detected' : `Changes in zones: ${changedZones.join(', ')}`
+		);
 
 		if (changedZones.length === 0) {
 			console.log('No schedule changes detected');
@@ -315,6 +324,48 @@ async function getCachedData(supabase: SupabaseClient): Promise<YasnoResponse> {
 }
 
 /**
+ * Get detailed information about what changed in a zone
+ */
+function getChangeDetails(zone: string, freshZone: ZoneData, cachedZone?: ZoneData): string {
+	if (!cachedZone) {
+		return `${zone}: First time seeing this zone`;
+	}
+
+	const details: string[] = [];
+
+	// Check today
+	if (!compareScheduleData(freshZone.today, cachedZone.today)) {
+		if (freshZone.today.status !== cachedZone.today.status) {
+			details.push(`today status: ${cachedZone.today.status} → ${freshZone.today.status}`);
+		}
+		if (freshZone.today.slots.length !== cachedZone.today.slots.length) {
+			details.push(`today slots count: ${cachedZone.today.slots.length} → ${freshZone.today.slots.length}`);
+		} else {
+			details.push('today slots changed');
+		}
+	}
+
+	// Check tomorrow
+	if (!compareScheduleData(freshZone.tomorrow, cachedZone.tomorrow)) {
+		if (freshZone.tomorrow.status !== cachedZone.tomorrow.status) {
+			details.push(`tomorrow status: ${cachedZone.tomorrow.status} → ${freshZone.tomorrow.status}`);
+		}
+		if (freshZone.tomorrow.slots.length !== cachedZone.tomorrow.slots.length) {
+			details.push(`tomorrow slots count: ${cachedZone.tomorrow.slots.length} → ${freshZone.tomorrow.slots.length}`);
+		} else {
+			details.push('tomorrow slots changed');
+		}
+	}
+
+	// Check if updatedOn changed (for reference, even though we don't use it for detection)
+	if (freshZone.updatedOn !== cachedZone.updatedOn) {
+		details.push(`updatedOn: ${cachedZone.updatedOn || 'null'} → ${freshZone.updatedOn || 'null'}`);
+	}
+
+	return `${zone}: ${details.join(', ')}`;
+}
+
+/**
  * Detect which zones have changed by comparing fresh and cached data
  */
 function detectChangedZones(freshData: YasnoResponse, cachedData: YasnoResponse): string[] {
@@ -327,6 +378,8 @@ function detectChangedZones(freshData: YasnoResponse, cachedData: YasnoResponse)
 
 		if (hasZoneChanged(freshZone, cachedZone)) {
 			changedZones.push(zone);
+			// Log detailed change information
+			console.log(getChangeDetails(zone, freshZone, cachedZone));
 		}
 	}
 
@@ -334,22 +387,48 @@ function detectChangedZones(freshData: YasnoResponse, cachedData: YasnoResponse)
 }
 
 /**
+ * Compare only the meaningful schedule data (slots and status), ignoring date and timestamp fields
+ */
+function compareScheduleData(day1: DaySchedule, day2: DaySchedule): boolean {
+	// Compare status
+	if (day1.status !== day2.status) {
+		return false; // Different
+	}
+
+	// Compare slots array
+	if (day1.slots.length !== day2.slots.length) {
+		return false; // Different number of slots
+	}
+
+	// Compare each slot
+	for (let i = 0; i < day1.slots.length; i++) {
+		const slot1 = day1.slots[i];
+		const slot2 = day2.slots[i];
+
+		if (slot1.start !== slot2.start || slot1.end !== slot2.end || slot1.type !== slot2.type) {
+			return false; // Slot differs
+		}
+	}
+
+	return true; // Same
+}
+
+/**
  * Check if a zone's schedule has changed
+ * Only compares meaningful data: slots and status (ignores dates and timestamps)
  */
 function hasZoneChanged(freshZone: ZoneData, cachedZone?: ZoneData): boolean {
 	if (!cachedZone) {
 		return true; // First time seeing this zone
 	}
 
-	// Compare timestamps if available (most reliable)
-	if (freshZone.updatedOn && cachedZone.updatedOn) {
-		return freshZone.updatedOn !== cachedZone.updatedOn;
-	}
+	// Compare today's schedule data
+	const todayChanged = !compareScheduleData(freshZone.today, cachedZone.today);
 
-	// Fallback: compare schedule data only
-	const freshSchedule = { today: freshZone.today, tomorrow: freshZone.tomorrow };
-	const cachedSchedule = { today: cachedZone.today, tomorrow: cachedZone.tomorrow };
-	return JSON.stringify(freshSchedule) !== JSON.stringify(cachedSchedule);
+	// Compare tomorrow's schedule data
+	const tomorrowChanged = !compareScheduleData(freshZone.tomorrow, cachedZone.tomorrow);
+
+	return todayChanged || tomorrowChanged;
 }
 
 /**
@@ -388,6 +467,26 @@ async function updateCache(supabase: SupabaseClient, freshData: YasnoResponse): 
 		.from('schedule_cache')
 		.update({ raw_data: freshData, updated_at: new Date() })
 		.eq('id', 1);
+}
+
+/**
+ * Save API response to history table for debugging
+ */
+async function saveToHistory(
+	supabase: SupabaseClient,
+	freshData: YasnoResponse,
+	changedZones: string[],
+	notes?: string
+): Promise<void> {
+	try {
+		await supabase.from('schedule_history').insert({
+			raw_data: freshData,
+			changed_zones: changedZones.length > 0 ? changedZones : null,
+			notes: notes || null
+		});
+	} catch (error) {
+		console.error('Error saving to history:', error);
+	}
 }
 
 // ==========================================
