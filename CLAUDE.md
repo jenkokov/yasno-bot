@@ -308,3 +308,4 @@ Configured in `wrangler.jsonc`:
 - Group database queries to minimize round trips
 - Use the grouping feature in `getAllSubscribersGroupedByZone()` for notifications
 - Respect Telegram rate limits using `sendBulkMessages()`
+- when something is ready you can ask to commit and push changes. I have an pipeline so it will deploy all stuff

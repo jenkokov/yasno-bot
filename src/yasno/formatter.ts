@@ -34,6 +34,13 @@ function formatDay(dayData: DaySchedule, label: string): string {
 		weekday: 'short'
 	});
 
+	// Check for Emergency Shutdowns status
+	if (dayData.status === SCHEDULE_STATUS.EMERGENCY) {
+		return `📅 *${label}* (${dateStr}) ⚠️\n\n` +
+			`🔴 *Аварійні відключення*\n` +
+			`Графіки відключень не діють. Електроенергія може бути відключена у будь-який момент.\n`;
+	}
+
 	// Status emoji based on schedule certainty
 	const statusEmoji = dayData.status === SCHEDULE_STATUS.APPLIES ? '✅' : '⏳';
 

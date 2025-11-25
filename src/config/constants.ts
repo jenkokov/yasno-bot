@@ -7,6 +7,7 @@ export const YASNO_API = 'https://app.yasno.ua/api/blackout-service/public/shutd
 export const SCHEDULE_STATUS = {
 	APPLIES: 'ScheduleApplies',
 	WAITING: 'WaitingForSchedule',
+	EMERGENCY: 'EmergencyShutdowns',
 } as const;
 
 export const SLOT_TYPE = {
